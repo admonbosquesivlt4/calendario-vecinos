@@ -5,33 +5,20 @@ from datetime import date
 import calendar
 
 # ── CONFIG ─────────────────────────────────────────
-st.set_page_config(page_title="Avisos", page_icon="🏘️", layout="centered")
+st.set_page_config(page_title="Avisos Bosques IV - Lote 4", page_icon="🏘️", layout="centered")
 
 SUPABASE_URL = "https://fhaqdadmudrdphlhabph.supabase.co"
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin1234")
 
+DEBUG = False  # 🔥 Cambia a True si quieres ver logs
+
 # ── ESTILOS ────────────────────────────────────────
 st.markdown("""
 <style>
-.card {
-    background: #fff;
-    padding: 10px;
-    border-radius: 12px;
-    margin-bottom: 8px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-}
-.event {
-    padding:5px;
-    border-radius:6px;
-    margin-top:4px;
-    font-size:12px;
-}
-.header {
-    text-align:center;
-    font-weight:600;
-    font-size:18px;
-}
+.card {background:#fff;padding:10px;border-radius:12px;margin-bottom:8px;box-shadow:0 2px 6px rgba(0,0,0,0.08);}
+.event {padding:5px;border-radius:6px;margin-top:4px;font-size:12px;}
+.header {text-align:center;font-weight:600;font-size:18px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -46,21 +33,32 @@ def headers():
 def supa_get(tabla):
     try:
         r = requests.get(
-            f"{SUPABASE_URL}/rest/v1/{tabla}?select=*&order=fecha.asc",
+            f"{SUPABASE_URL}/rest/v1/{tabla}?select=*",
             headers=headers(),
             timeout=10
         )
-        return r.json() if r.status_code == 200 else []
-    except:
+
+        if r.status_code != 200:
+            if DEBUG:
+                st.error(f"Error Supabase {tabla}: {r.status_code}")
+                st.write(r.text)
+            return []
+
+        return r.json()
+
+    except Exception as e:
+        if DEBUG:
+            st.error(f"Error conexión: {e}")
         return []
 
 def supa_post(tabla, data):
     try:
-        return requests.post(
+        r = requests.post(
             f"{SUPABASE_URL}/rest/v1/{tabla}",
             headers=headers(),
             json=data
-        ).status_code in (200,201)
+        )
+        return r.status_code in (200, 201)
     except:
         return False
 
@@ -68,9 +66,18 @@ def supa_post(tabla, data):
 @st.cache_data(ttl=60)
 def cargar_eventos():
     data = supa_get("eventos")
-    df = pd.DataFrame(data) if data else pd.DataFrame(columns=["fecha","titulo","color"])
 
-    if not df.empty:
+    if not data:
+        return pd.DataFrame(columns=["fecha","titulo","color"])
+
+    df = pd.DataFrame(data)
+
+    if df.empty:
+        return pd.DataFrame(columns=["fecha","titulo","color"])
+
+    df.columns = df.columns.str.strip().str.lower()
+
+    if "fecha" in df.columns:
         df["fecha"] = pd.to_datetime(df["fecha"])
         df["fecha_str"] = df["fecha"].dt.strftime("%Y-%m-%d")
 
@@ -79,7 +86,18 @@ def cargar_eventos():
 @st.cache_data(ttl=120)
 def cargar_vecinos():
     data = supa_get("vecinos")
-    return pd.DataFrame(data) if data else pd.DataFrame()
+
+    if not data or not isinstance(data, list):
+        return pd.DataFrame(columns=["lote","depto","pin","nombre"])
+
+    df = pd.DataFrame(data)
+
+    if df.empty:
+        return pd.DataFrame(columns=["lote","depto","pin","nombre"])
+
+    df.columns = df.columns.str.strip().str.lower()
+
+    return df
 
 # ── LOGIN ──────────────────────────────────────────
 def login_vecino():
@@ -91,6 +109,21 @@ def login_vecino():
 
     if st.button("Ingresar", use_container_width=True):
         vecinos = cargar_vecinos()
+
+        if DEBUG:
+            st.write("Vecinos:", vecinos.shape)
+            st.write("Columnas:", vecinos.columns.tolist())
+
+        if vecinos.empty:
+            st.error("No hay vecinos registrados o falla conexión")
+            return
+
+        for col in ["lote", "depto", "pin"]:
+            if col not in vecinos.columns:
+                st.error(f"Falta columna '{col}' en BD")
+                if DEBUG:
+                    st.write(vecinos.columns.tolist())
+                return
 
         vecinos["lote"] = vecinos["lote"].astype(str).str.strip().str.upper()
         vecinos["depto"] = vecinos["depto"].astype(str).str.strip().str.upper()
@@ -105,11 +138,12 @@ def login_vecino():
         if not user.empty:
             st.session_state.login = True
             st.session_state.user = user.iloc[0].to_dict()
+            st.success("Bienvenido 👋")
             st.rerun()
         else:
             st.error("Datos incorrectos")
 
-# ── CALENDARIO OPTIMIZADO ──────────────────────────
+# ── CALENDARIO ─────────────────────────────────────
 def render_calendar(eventos):
 
     if "year" not in st.session_state:
@@ -145,14 +179,14 @@ def render_calendar(eventos):
         st.session_state.month = date.today().month
         st.rerun()
 
-    # Días de la semana
+    # Días
     dias = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
     cols = st.columns(7)
     for i, d in enumerate(dias):
         with cols[i]:
             st.markdown(f"<div style='text-align:center;font-weight:600'>{d}</div>", unsafe_allow_html=True)
 
-    # Eventos dict
+    # Eventos
     ev_dict = {}
     if not eventos.empty:
         for _, ev in eventos.iterrows():
@@ -184,7 +218,7 @@ def render_calendar(eventos):
 def pantalla_vecino():
     user = st.session_state.user
 
-    st.markdown(f"<div class='card'>👤 {user.get('nombre')} | Lote {user.get('lote')}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='card'>👤 {user.get('nombre','')} | Lote {user.get('lote','')}</div>", unsafe_allow_html=True)
 
     eventos = cargar_eventos()
 
@@ -192,7 +226,6 @@ def pantalla_vecino():
 
     if not eventos.empty:
         futuros = eventos[eventos["fecha"] >= pd.to_datetime(date.today())]
-
         for _, ev in futuros.iterrows():
             st.markdown(
                 f"<div class='card'><b>{ev['titulo']}</b><br>{ev['fecha_str']}</div>",
@@ -206,7 +239,6 @@ def pantalla_admin():
     st.title("🔐 Administración")
 
     eventos = cargar_eventos()
-
     render_calendar(eventos)
 
     st.divider()
@@ -225,7 +257,7 @@ def pantalla_admin():
                 st.success("Guardado")
                 st.rerun()
             else:
-                st.error("Error")
+                st.error("Error al guardar")
 
 # ── MAIN ───────────────────────────────────────────
 def main():
