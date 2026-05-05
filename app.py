@@ -11,26 +11,26 @@ SUPABASE_URL = "https://fhaqdadmudrdphlhabph.supabase.co"
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin1234")
 
-# ── CSS (LOOK APP) ─────────────────────────────────
+# ── ESTILOS ────────────────────────────────────────
 st.markdown("""
 <style>
 .card {
-    background: #ffffff;
-    padding: 12px;
+    background: #fff;
+    padding: 10px;
     border-radius: 12px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     box-shadow: 0 2px 6px rgba(0,0,0,0.08);
 }
 .event {
-    padding:6px;
+    padding:5px;
     border-radius:6px;
-    margin-top:5px;
-    font-size:13px;
+    margin-top:4px;
+    font-size:12px;
 }
 .header {
-    font-size:20px;
+    text-align:center;
     font-weight:600;
-    margin-bottom:10px;
+    font-size:18px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -44,26 +44,46 @@ def headers():
     }
 
 def supa_get(tabla):
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/{tabla}?select=*", headers=headers())
-    return r.json() if r.status_code == 200 else []
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{tabla}?select=*&order=fecha.asc",
+            headers=headers(),
+            timeout=10
+        )
+        return r.json() if r.status_code == 200 else []
+    except:
+        return []
 
 def supa_post(tabla, data):
-    return requests.post(f"{SUPABASE_URL}/rest/v1/{tabla}", headers=headers(), json=data).status_code in (200,201)
+    try:
+        return requests.post(
+            f"{SUPABASE_URL}/rest/v1/{tabla}",
+            headers=headers(),
+            json=data
+        ).status_code in (200,201)
+    except:
+        return False
 
 # ── DATA ───────────────────────────────────────────
-@st.cache_data
+@st.cache_data(ttl=60)
 def cargar_eventos():
     data = supa_get("eventos")
-    return pd.DataFrame(data) if data else pd.DataFrame(columns=["fecha","titulo","color"])
+    df = pd.DataFrame(data) if data else pd.DataFrame(columns=["fecha","titulo","color"])
 
-@st.cache_data
+    if not df.empty:
+        df["fecha"] = pd.to_datetime(df["fecha"])
+        df["fecha_str"] = df["fecha"].dt.strftime("%Y-%m-%d")
+
+    return df
+
+@st.cache_data(ttl=120)
 def cargar_vecinos():
     data = supa_get("vecinos")
     return pd.DataFrame(data) if data else pd.DataFrame()
 
 # ── LOGIN ──────────────────────────────────────────
 def login_vecino():
-    st.markdown("<div class='header'>🏘️ Avisos Bosques IV Lote 4</div>", unsafe_allow_html=True)
+    st.markdown("## 🏘️ Avisos Bosques IV - Lote 4")
 
     lote = st.text_input("Lote")
     depto = st.text_input("Depto")
@@ -83,54 +103,65 @@ def login_vecino():
         ]
 
         if not user.empty:
-            st.session_state["login"] = True
-            st.session_state["user"] = user.iloc[0].to_dict()
+            st.session_state.login = True
+            st.session_state.user = user.iloc[0].to_dict()
             st.rerun()
         else:
             st.error("Datos incorrectos")
 
-# ── CALENDARIO PRO ─────────────────────────────────
+# ── CALENDARIO OPTIMIZADO ──────────────────────────
 def render_calendar(eventos):
 
-    # Estado mes
     if "year" not in st.session_state:
         st.session_state.year = date.today().year
         st.session_state.month = date.today().month
 
-    col1, col2, col3 = st.columns([1,2,1])
+    # Navegación
+    c1, c2, c3 = st.columns([1,2,1])
 
-    with col1:
+    with c1:
         if st.button("◀"):
             if st.session_state.month == 1:
                 st.session_state.month = 12
                 st.session_state.year -= 1
             else:
                 st.session_state.month -= 1
+            st.rerun()
 
-    with col2:
+    with c2:
         st.markdown(f"<div class='header'>{calendar.month_name[st.session_state.month]} {st.session_state.year}</div>", unsafe_allow_html=True)
 
-    with col3:
+    with c3:
         if st.button("▶"):
             if st.session_state.month == 12:
                 st.session_state.month = 1
                 st.session_state.year += 1
             else:
                 st.session_state.month += 1
+            st.rerun()
 
     if st.button("Hoy"):
         st.session_state.year = date.today().year
         st.session_state.month = date.today().month
+        st.rerun()
 
+    # Días de la semana
+    dias = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
+    cols = st.columns(7)
+    for i, d in enumerate(dias):
+        with cols[i]:
+            st.markdown(f"<div style='text-align:center;font-weight:600'>{d}</div>", unsafe_allow_html=True)
+
+    # Eventos dict
     ev_dict = {}
-    for _, ev in eventos.iterrows():
-        ev_dict.setdefault(ev["fecha"], []).append(ev)
+    if not eventos.empty:
+        for _, ev in eventos.iterrows():
+            ev_dict.setdefault(ev["fecha_str"], []).append(ev)
 
     semanas = calendar.monthcalendar(st.session_state.year, st.session_state.month)
 
     for semana in semanas:
         cols = st.columns(7)
-
         for i, dia in enumerate(semana):
             if dia == 0:
                 continue
@@ -142,30 +173,37 @@ def render_calendar(eventos):
 
                 if fecha_str in ev_dict:
                     for ev in ev_dict[fecha_str]:
-                        st.markdown(f"<div class='event' style='background:{ev.get('color','#ddd')}22'>{ev['titulo']}</div>", unsafe_allow_html=True)
+                        st.markdown(
+                            f"<div class='event' style='background:{ev.get('color','#ddd')}22'>{ev['titulo']}</div>",
+                            unsafe_allow_html=True
+                        )
 
                 st.markdown("</div>", unsafe_allow_html=True)
 
-# ── VISTA VECINO ───────────────────────────────────
+# ── VECINO ─────────────────────────────────────────
 def pantalla_vecino():
-    user = st.session_state["user"]
+    user = st.session_state.user
 
     st.markdown(f"<div class='card'>👤 {user.get('nombre')} | Lote {user.get('lote')}</div>", unsafe_allow_html=True)
 
     eventos = cargar_eventos()
 
-    st.markdown("<div class='header'>📅 Próximos eventos</div>", unsafe_allow_html=True)
+    st.markdown("### 📅 Próximos eventos")
 
     if not eventos.empty:
-        eventos = eventos.sort_values("fecha")
-        for _, ev in eventos.iterrows():
-            st.markdown(f"<div class='card'><b>{ev['titulo']}</b><br>{ev['fecha']}</div>", unsafe_allow_html=True)
+        futuros = eventos[eventos["fecha"] >= pd.to_datetime(date.today())]
+
+        for _, ev in futuros.iterrows():
+            st.markdown(
+                f"<div class='card'><b>{ev['titulo']}</b><br>{ev['fecha_str']}</div>",
+                unsafe_allow_html=True
+            )
 
     render_calendar(eventos)
 
 # ── ADMIN ──────────────────────────────────────────
 def pantalla_admin():
-    st.title("Admin")
+    st.title("🔐 Administración")
 
     eventos = cargar_eventos()
 
@@ -177,19 +215,23 @@ def pantalla_admin():
     fecha = st.date_input("Fecha")
 
     if st.button("Guardar"):
-        supa_post("eventos", {
-            "titulo": titulo,
-            "fecha": str(fecha),
-            "color": "#185FA5"
-        })
-        st.success("Guardado")
-        st.rerun()
+        if titulo:
+            ok = supa_post("eventos", {
+                "titulo": titulo,
+                "fecha": str(fecha),
+                "color": "#185FA5"
+            })
+            if ok:
+                st.success("Guardado")
+                st.rerun()
+            else:
+                st.error("Error")
 
 # ── MAIN ───────────────────────────────────────────
 def main():
 
     if "login" not in st.session_state:
-        st.session_state["login"] = False
+        st.session_state.login = False
 
     menu = st.sidebar.selectbox("Modo", ["Vecino", "Admin"])
 
@@ -198,7 +240,7 @@ def main():
         if pwd == ADMIN_PASSWORD:
             pantalla_admin()
     else:
-        if not st.session_state["login"]:
+        if not st.session_state.login:
             login_vecino()
         else:
             pantalla_vecino()
